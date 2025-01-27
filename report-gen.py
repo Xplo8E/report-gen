@@ -8,9 +8,9 @@ from openai import OpenAI
  # To integrate OpenAI's API
 
 # API URLs and configurations
-OLLAMA_API_URL = "http://localhost:11434/api/generate"
+OLLAMA_API_URL = "http://192.168.1.8:11434/api/generate"
 OPENAI_API_KEY = "openai"
-DEFAULT_MODEL = "qwen2.5:3b"
+DEFAULT_MODEL = "llama3.2:3b"
 USE_OPENAI = False
 
 
@@ -26,44 +26,44 @@ REPORT_TEMPLATE = """# {title}
 
 _Report generated at {timestamp} using {model}_"""
 
-SYSTEM_PROMPT = """You are a senior cybersecurity analyst. Generate vulnerability reports with this structure:
+SYSTEM_PROMPT = """You are a highly skilled security researcher specializing in identifying vulnerabilities across web, API, Android, and iOS platforms. Your task is to report vulnerabilities in the following structured format:
 
 [Title]
-- Precise vulnerability identification (5-10 words)
-- Explicit affected component (e.g., "Payment Gateway API")
+{Platform}: {Vulnerability Name} - {Specific Location/Component}
 
 [Description]
-Single paragraph containing:
-1. Vulnerability type/location
-2. Essential exploitation path (if critical)
-3. Demonstrable technical/business impact
+Concise explanation of the vulnerability, including:
+- Affected component/endpoint
+- Technical cause (e.g., lack of input validation)
+- Demonstrable impact (e.g., "could expose 15,000 user credentials")
+- Attack vector (if non-obvious)
 
 [Remediation]
-2-3 technical fixes:
-- Specific implementation actions
-- Exact security mechanisms
-- No explanations or validation steps
+Numbered list of specific, actionable fixes:
+1. Technical solutions (e.g., "Implement parameterized queries")
+2. Configuration changes (e.g., "Set HttpOnly flag on cookies")
+3. Monitoring/validation (e.g., "Add WAF rules to block SQLi patterns")
 
-### Example:
+Guidelines:
+1. Title must specify platform (web/api/android/ios) and location
+2. Description should reference application-specific implementation flaws
+3. Remediations must be executable by developers
+4. Use real-world metrics where applicable ("exposes payment records", "grants admin privileges")
+5. Format remediation steps as a numbered list
+6. Omit CVSS, PoC, and reproduction steps unless explicitly requested
+
+Example Format:
 [Title]
-SQL Injection in User Search Endpoint
+API: Unrestricted File Upload in document-conversion API
 
 [Description]
-The /api/v1/users endpoint lacks input sanitization, allowing attackers to inject malicious SQL payloads through search parameters. This could enable unauthorized database access, potentially exposing 2.3M customer records including payment information.
+The document conversion endpoint accepts executable .jar files through its multipart form handler. This flaw stems from missing file-type validation in the Node.js middleware, allowing attackers to upload malicious binaries to AWS S3 storage (15MB file limit). Successful exploitation could enable remote code execution on processing servers.
 
 [Remediation]
-1. Implement parameterized queries using Python's SQLAlchemy ORM
-2. Deploy regex validation allowing only alphanumeric characters in search inputs
-3. Add WAF rules blocking SQL pattern matches (OWASP CRS ID 942100-942199)
-
-### Mandatory Requirements:
-1. Description must be 3-4 lines maximum - no technical jargon or secondary explanations
-2. Omit exploitation mechanics unless essential to demonstrate attacker value
-3. Remediation must be 2-3 bullet points
-4. Each point ≤ 12 words - pure technical action
-5. No explanations/rationale - only fix implementation
-6. Prioritize code/config changes over policies
-7. Use specific libraries/tools (e.g., "Use bcrypt hashing" not "improve password security")"""
+1. Implement allow-list validation for file extensions (PDF/DOCX/PNG only)
+2. Add magic byte verification using the 'file-type' library
+3. Configure S3 bucket policies to reject unauthorized MIME types
+4. Isolate document processing in a serverless environment with 5-minute execution limits"""
 
 # Function to interact with Ollama API
 def generate_report_ollama(vulnerability_name: str, model: str) -> dict:
@@ -74,7 +74,7 @@ def generate_report_ollama(vulnerability_name: str, model: str) -> dict:
                 "model": model,
                 "prompt": f"Vulnerability: {vulnerability_name}",
                 "system": SYSTEM_PROMPT,
-                "options": {"temperature": 0.7},
+                "options": {"temperature": 0, "top_k":0},
                 "stream": False,
                 "keep_alive": 0
             },
@@ -114,14 +114,14 @@ def generate_report_openai(vulnerability_name: str, model: str) -> dict:
 # Function to parse the generated report
 def parse_response(raw_text: str) -> dict:
     report = {
-        "title": "Security Vulnerability Report",
+        "title": "",
         "description": "",
         "remediation": ""
     }
 
     # print(raw_text)
-    # Extract title
-    title_match = re.search(r'### Title\s*(.*?)(?=\n###|\n$)', raw_text, re.IGNORECASE | re.DOTALL)
+    # Extract title with [Title] format
+    title_match = re.search(r'\[Title\]\s*\n(.+?)(?=\n\[|\n$)', raw_text, re.IGNORECASE | re.DOTALL)
     if title_match:
         report["title"] = title_match.group(1).strip()
 
@@ -148,7 +148,7 @@ def parse_response(raw_text: str) -> dict:
     if not report["description"]:
         report["description"] = "Failed to parse description. Raw response:\n"
 
-    if not report["remediation"] or report["description"]:
+    if not report["remediation"] or not report["description"]:
         print(raw_text)
 
     return report
